@@ -1,11 +1,11 @@
 #!/bin/bash
 #
-# AnyTLS-Go 服务端一键安装脚本
+# AnyTLS-Go 服务端一键安装脚本 (v3 - 增强解析)
 #
 # 功能:
 # - 自动识别系统架构 (amd64, arm64)
 # - 自动检测包管理器 (apt, dnf, yum)
-# - 自动从 GitHub API 获取最新版本
+# - 自动从 GitHub API 获取最新版本 (采用更健壮的解析逻辑)
 # - 支持自定义端口和密码
 # - 创建专用的非 root 用户运行服务，提升安全性
 # - 注册 systemd 服务并设置开机自启
@@ -124,7 +124,20 @@ if [ -z "${API_RESPONSE}" ]; then
     log_error "从 GitHub API (${API_URL}) 获取响应失败，请检查网络连接。"
 fi
 
-DOWNLOAD_URL=$(echo "${API_RESPONSE}" | grep -oE "browser_download_url\":\s*\".*?${ARCH_TAG}\.zip\"" | cut -d'"' -f4)
+# ==================== 修改核心点 ====================
+# 采用更稳定、更简单的多重 grep 管道来解析 JSON 文本
+# 1. 筛选出包含 "browser_download_url" 的内容
+# 2. 在结果中进一步筛选出包含当前架构 `${ARCH_TAG}` 的那一个
+# 3. 确保它是一个 .zip 结尾的链接
+# 4. 使用 cut 切割字符串，提取出纯粹的 URL
+# 5. 使用 head -n 1 确保即使有多个匹配也只取第一个
+DOWNLOAD_URL=$(echo "${API_RESPONSE}" | \
+    grep "browser_download_url" | \
+    grep "${ARCH_TAG}" | \
+    grep "\.zip\"" | \
+    cut -d'"' -f4 | \
+    head -n 1)
+# ====================================================
 
 if [ -z "${DOWNLOAD_URL}" ]; then
   VERSION_TAG=$(echo "${API_RESPONSE}" | grep -oE '"tag_name":\s*".*?"' | cut -d'"' -f4)
