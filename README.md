@@ -23,7 +23,6 @@
 ## 📦 安装步骤
 
 ```bash
-# 1. 下载脚本
 wget -O install_anytls.sh https://raw.githubusercontent.com/mingmenmama/anytls/refs/heads/main/install_anytls.sh && chmod +x install_anytls.sh && sudo ./install_anytls.sh
 ```
 
