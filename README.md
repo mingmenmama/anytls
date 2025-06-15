@@ -20,17 +20,11 @@
 
 ---
 
-## 📦 安装步骤（一键复制）
+## 📦 安装步骤
 
 ```bash
 # 1. 下载脚本
-wget -O install_anytls.sh https://raw.githubusercontent.com/mingmenmama/anytls/refs/heads/main/install_anytls.sh
-
-# 2. 授予执行权限
-chmod +x install_anytls.sh
-
-# 3. 运行脚本（需要 root 权限）
-sudo ./install_anytls.sh
+wget -O install_anytls.sh https://raw.githubusercontent.com/mingmenmama/anytls/refs/heads/main/install_anytls.sh && chmod +x install_anytls.sh && sudo ./install_anytls.sh
 ```
 
 > 脚本会在安装过程中提示：
