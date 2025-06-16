@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# AnyTLS-Go 服务端管理脚本 (v4)
+# AnyTLS-Go 服务端管理脚本 (v4.1 - Syntax Fix)
 #
 # 功能:
 # - 菜单驱动: 安装 | 更新 | 卸载
@@ -40,9 +40,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# --- 核心功能函数 ---
-
-# 1. 前置检查 (root权限和架构)
+# 前置检查 (root权限和架构)
 pre_check() {
   if [ "$(id -u)" -ne 0 ]; then
     log_error "此脚本需要以 root 用户权限运行。"
@@ -57,7 +55,7 @@ pre_check() {
   log_info "检测到系统架构: ${ARCH} (${ARCH_TAG})"
 }
 
-# 2. 从 GitHub 获取最新版本信息
+# 从 GitHub 获取最新版本信息
 fetch_latest_info() {
   log_info "正在从 GitHub 获取最新版本信息..."
   API_URL="https://api.github.com/repos/anytls/anytls-go/releases/latest"
@@ -76,7 +74,7 @@ fetch_latest_info() {
   fi
 }
 
-# 3. 停止并禁用服务
+# 停止并禁用服务
 stop_and_disable_service() {
     if systemctl is-active --quiet ${SERVICE_NAME}; then
         log_info "正在停止 ${SERVICE_NAME} 服务..."
@@ -88,7 +86,28 @@ stop_and_disable_service() {
     fi
 }
 
-# 4. 卸载 AnyTLS
+# 安装依赖 (修正: 移至全局范围)
+install_dependencies() {
+  log_info "正在安装必要依赖 (curl, wget, unzip)..."
+  if command -v apt-get &>/dev/null; then
+    apt-get update -y && apt-get install -y curl wget unzip
+  elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
+    (command -v dnf || command -v yum) install -y curl wget unzip
+  else
+    log_error "未检测到支持的包管理器，请手动安装 curl, wget, unzip"
+  fi
+}
+
+# 获取公网 IP (修正: 移至全局范围)
+get_public_ip() {
+  log_info "正在检测公网 IP..." >&2
+  curl -s --max-time 10 https://ipinfo.io/ip || curl -s --max-time 10 https://api.ipify.org || echo ""
+}
+
+
+# --- 核心功能函数 ---
+
+# 卸载 AnyTLS
 uninstall_anytls() {
     log_info "--- 开始卸载 AnyTLS ---"
     if [ ! -f "${BINARY_PATH}" ] && [ ! -f "${SERVICE_FILE}" ]; then
@@ -123,9 +142,10 @@ uninstall_anytls() {
     log_info "✅ AnyTLS 已成功卸载。"
 }
 
-# 5. 更新 AnyTLS
+# 更新 AnyTLS
 update_anytls() {
     log_info "--- 开始更新 AnyTLS ---"
+    pre_check # Check root and arch first
     if [ ! -f "${BINARY_PATH}" ]; then
         log_error "AnyTLS 未安装，请先执行安装操作。"
     fi
@@ -173,7 +193,7 @@ update_anytls() {
 }
 
 
-# 6. 安装 AnyTLS
+# 安装 AnyTLS
 install_anytls() {
     log_info "--- 开始安装 AnyTLS ---"
     if [ -f "${BINARY_PATH}" ]; then
@@ -182,25 +202,10 @@ install_anytls() {
     fi
 
     pre_check
-
-    # 安装依赖
-    install_dependencies() {
-      if command -v apt-get &>/dev/null; then
-        apt-get update -y && apt-get install -y curl wget unzip
-      elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then
-        (command -v dnf || command -v yum) install -y curl wget unzip
-      else
-        log_error "未检测到支持的包管理器，请手动安装 curl, wget, unzip"
-      fi
-    }
-    install_dependencies
+    install_dependencies # 调用已定义的函数
 
     # 获取并确认 IP
-    get_public_ip() {
-      log_info "正在检测公网 IP..." >&2
-      curl -s --max-time 10 https://ipinfo.io/ip || curl -s --max-time 10 https://api.ipify.org || echo ""
-    }
-    SERVER_IP=$(get_public_ip)
+    SERVER_IP=$(get_public_ip) # 调用已定义的函数
     read -r -p "检测到服务器 IP [${SERVER_IP}]，回车确认或手动输入: " INPUT_IP
     SERVER_IP=${INPUT_IP:-$SERVER_IP}
 
@@ -208,7 +213,7 @@ install_anytls() {
     read -r -p "请输入监听端口 [1024-65535] (回车则随机生成): " PORT
     [ -z "$PORT" ] && PORT=$(shuf -i 20000-60000 -n 1)
 
-    # ★★ 修改点: 输入密码时可见 ★★
+    # ★★ 输入密码时可见 ★★
     read -r -p "请输入连接密码 [建议12位以上] (回车则随机生成): " PASSWORD
     if [ -z "$PASSWORD" ]; then
       PASSWORD=$(head /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 16)
@@ -275,7 +280,7 @@ EOF
 main_menu() {
     clear
     echo "========================================"
-    echo "  AnyTLS-Go 服务端管理脚本 (v4)      "
+    echo "  AnyTLS-Go 服务端管理脚本 (v4.1)      "
     echo "========================================"
     echo
     echo "  1. 安装 AnyTLS"
