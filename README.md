@@ -19,10 +19,16 @@
 
 ---
 
-## 📦 安装步骤
+## 📦 安装
 
 ```bash
 wget -O install_anytls.sh https://raw.githubusercontent.com/mingmenmama/anytls/refs/heads/main/install_anytls.sh && chmod +x install_anytls.sh && sudo ./install_anytls.sh
+```
+
+## 📦 卸载
+
+```bash
+wget -O uninstall_anytls.sh https://raw.githubusercontent.com/mingmenmama/anytls/refs/heads/main/uninstall_anytls.sh && chmod +x uninstall_anytls.sh && sudo ./uninstall_anytls.sh
 ```
 
 > 脚本会在安装过程中提示：
