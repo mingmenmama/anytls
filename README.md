@@ -36,7 +36,7 @@
 ### 基础安装
 
 ```bash
-wget -O install_anytls.sh https://raw.githubusercontent.com/10000ge10000/anytls/main/install_anytls.sh && chmod +x install_anytls.sh && sudo ./install_anytls.sh
+wget -O install_anytls.sh https://raw.githubusercontent.com/mingmenmama/anytls/main/install_anytls.sh && chmod +x install_anytls.sh && sudo ./install_anytls.sh
 ```
 
 ### 高级安装选项
@@ -65,7 +65,7 @@ sudo ./install_anytls.sh --update
 sudo ./install_anytls.sh --check-status
 
 # 卸载服务
-wget -O uninstall_anytls.sh https://raw.githubusercontent.com/10000ge10000/anytls/main/uninstall_anytls.sh && chmod +x uninstall_anytls.sh && sudo ./uninstall_anytls.sh
+wget -O uninstall_anytls.sh https://raw.githubusercontent.com/mingmenmama/anytls/main/uninstall_anytls.sh && chmod +x uninstall_anytls.sh && sudo ./uninstall_anytls.sh
 ```
 
 ---
@@ -198,7 +198,7 @@ sudo ./install_anytls.sh --menu
 ## 📖 项目源
 
 AnyTLS-Go 项目: [https://github.com/anytls/anytls-go](https://github.com/anytls/anytls-go)  
-安装脚本项目: [https://github.com/10000ge10000/anytls](https://github.com/10000ge10000/anytls)
+安装脚本项目: [https://github.com/mingmenmama/anytls](https://github.com/mingmenmama/anytls)
 
 ---
 
