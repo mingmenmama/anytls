@@ -205,7 +205,7 @@ sudo ./install_anytls.sh --menu
 ## 📖 项目源
 
 AnyTLS-Go 项目: [https://github.com/anytls/anytls-go](https://github.com/anytls/anytls-go)  
-安装脚本项目: [https://github.com/10000ge10000/anytls](https://github.com/mingmenmama/anytls)
+安装脚本项目: [https://github.com/10000ge10000/anytls](https://github.com/10000ge10000/anytls)
 
 ---
 
