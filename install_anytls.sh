@@ -52,6 +52,247 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# 检查端口是否可用
+check_port_available() {
+  local port=$1
+  
+  log_debug "检查端口 ${port} 是否可用..."
+  
+  # 使用不同命令检查端口，确保兼容不同系统
+  if command -v lsof &>/dev/null; then
+    if lsof -i:${port} &>/dev/null; then
+      log_debug "端口 ${port} 被占用 (lsof 检测)"
+      return 1 # 端口被占用
+    fi
+  elif command -v netstat &>/dev/null; then
+    if netstat -tuln | grep -q ":${port} "; then
+      log_debug "端口 ${port} 被占用 (netstat 检测)"
+      return 1 # 端口被占用
+    fi
+  elif command -v ss &>/dev/null; then
+    if ss -tuln | grep -q ":${port} "; then
+      log_debug "端口 ${port} 被占用 (ss 检测)"
+      return 1 # 端口被占用
+    fi
+  else
+    log_warn "未找到 lsof、netstat 或 ss 命令，无法可靠检查端口状态"
+    # 尝试使用更基本的方法检查
+    if ! (echo > /dev/tcp/127.0.0.1/${port}) 2>/dev/null; then
+      log_debug "端口 ${port} 可能可用 (基本检测)"
+      return 0 # 可能可用
+    else
+      log_debug "端口 ${port} 可能被占用 (基本检测)"
+      return 1 # 可能被占用
+    fi
+  fi
+  
+  log_debug "端口 ${port} 可用"
+  return 0 # 端口可用
+}
+
+# 查找可用端口
+find_available_port() {
+  log_info "正在查找可用端口..."
+  
+  # 从随机范围内查找可用端口
+  local attempts=0
+  local max_attempts=10
+  local port
+  
+  while [ $attempts -lt $max_attempts ]; do
+    port=$(shuf -i 20000-60000 -n 1)
+    if check_port_available $port; then
+      log_info "找到可用端口: ${port}"
+      echo $port
+      return 0
+    fi
+    attempts=$((attempts + 1))
+  done
+  
+  log_error "无法找到可用端口，请手动指定一个未被使用的端口"
+}
+
+# 获取并处理占用端口的进程信息
+get_port_process_info() {
+  local port=$1
+  local process_info=""
+  
+  if command -v lsof &>/dev/null; then
+    process_info=$(lsof -i:${port} | tail -n +2)
+  elif command -v netstat &>/dev/null; then
+    process_info=$(netstat -tulnp 2>/dev/null | grep ":${port} ")
+  elif command -v ss &>/dev/null; then
+    process_info=$(ss -tulnp | grep ":${port} ")
+  fi
+  
+  echo "$process_info"
+}
+
+# 尝试释放被占用的端口
+try_release_port() {
+  local port=$1
+  local force=$2
+  
+  log_info "尝试释放端口 ${port}..."
+  
+  # 获取占用端口的进程 PID
+  local pid=""
+  
+  if command -v lsof &>/dev/null; then
+    pid=$(lsof -t -i:${port} 2>/dev/null | head -n 1)
+  elif command -v netstat &>/dev/null; then
+    pid=$(netstat -tulnp 2>/dev/null | grep ":${port} " | awk '{print $7}' | cut -d/ -f1 | head -n 1)
+  elif command -v ss &>/dev/null; then
+    pid=$(ss -tulnp | grep ":${port} " | grep -oP 'pid=\K\d+' | head -n 1)
+  fi
+  
+  if [ -n "$pid" ]; then
+    log_info "找到占用端口 ${port} 的进程 PID: ${pid}"
+    
+    # 获取进程名称以供确认
+    local process_name=$(ps -p $pid -o comm= 2>/dev/null || echo "未知进程")
+    
+    if [ "$force" != "force" ]; then
+      read -r -p "确认终止进程 ${process_name} (PID: ${pid})? (y/n): " confirm
+      if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        log_info "已取消终止进程"
+        return 1
+      fi
+    fi
+    
+    log_info "正在终止进程 ${process_name} (PID: ${pid})..."
+    kill -15 $pid 2>/dev/null
+    
+    # 等待进程终止
+    sleep 2
+    
+    # 检查进程是否仍在运行
+    if kill -0 $pid 2>/dev/null; then
+      log_warn "进程未响应正常终止信号，尝试强制终止..."
+      kill -9 $pid 2>/dev/null
+      sleep 1
+    fi
+    
+    # 再次检查端口是否已释放
+    if check_port_available $port; then
+      log_info "成功释放端口 ${port}"
+      return 0
+    else
+      log_warn "无法释放端口 ${port}，可能需要手动处理"
+      return 1
+    fi
+  else
+    log_warn "无法找到占用端口 ${port} 的进程"
+    return 1
+  fi
+}
+
+# 处理端口冲突
+handle_port_conflict() {
+  local port=$1
+  
+  # 显示占用端口的进程信息
+  log_warn "端口 ${port} 已被占用!"
+  echo "占用端口的进程信息:"
+  local process_info=$(get_port_process_info $port)
+  
+  if [ -n "$process_info" ]; then
+    echo "$process_info"
+  else
+    echo "无法获取占用端口的进程信息"
+  fi
+  
+  echo ""
+  echo "请选择操作:"
+  echo "1) 尝试释放端口 (终止占用进程)"
+  echo "2) 使用其他可用端口"
+  echo "3) 手动指定新端口"
+  
+  read -r -p "请选择 [1-3]: " port_action
+  
+  case $port_action in
+    1)
+      if try_release_port $port; then
+        echo $port
+      else
+        # 如果无法释放端口，提示使用其他端口
+        echo "无法释放端口，将使用其他可用端口"
+        local new_port=$(find_available_port)
+        echo $new_port
+      fi
+      ;;
+    2)
+      local new_port=$(find_available_port)
+      echo $new_port
+      ;;
+    3)
+      local valid_port=0
+      while [ $valid_port -eq 0 ]; do
+        read -r -p "请输入新端口 [1024-65535]: " manual_port
+        
+        # 验证输入是否为数字
+        if [[ ! "$manual_port" =~ ^[0-9]+$ ]]; then
+          echo "请输入有效的数字端口"
+          continue
+        fi
+        
+        # 验证端口范围
+        if [ $manual_port -lt 1024 ] || [ $manual_port -gt 65535 ]; then
+          echo "端口必须在 1024-65535 范围内"
+          continue
+        fi
+        
+        # 检查端口是否可用
+        if ! check_port_available $manual_port; then
+          echo "端口 ${manual_port} 也被占用，请选择其他端口"
+          continue
+        fi
+        
+        valid_port=1
+      done
+      
+      echo $manual_port
+      ;;
+    *)
+      log_warn "无效的选择，将使用其他可用端口"
+      local new_port=$(find_available_port)
+      echo $new_port
+      ;;
+  esac
+}
+
+# 更新现有服务的端口
+update_service_port() {
+  local old_port=$1
+  local new_port=$2
+  
+  if [ -f "/etc/systemd/system/anytls.service" ]; then
+    log_info "更新服务配置，端口从 ${old_port} 改为 ${new_port}..."
+    
+    # 提取现有配置
+    local current_password=$(grep -oP 'ExecStart=.*?-p\s+\K[^ ]+' /etc/systemd/system/anytls.service || echo "")
+    local current_tls_params=$(grep -oP 'ExecStart=.*?(--cert.*?)($|\s)' /etc/systemd/system/anytls.service || echo "")
+    
+    # 更新服务文件
+    sed -i "s|ExecStart=.*|ExecStart=/usr/local/bin/anytls-server -l 0.0.0.0:${new_port} -p ${current_password} ${current_tls_params}|" /etc/systemd/system/anytls.service
+    
+    # 重载配置
+    systemctl daemon-reload
+    
+    # 尝试重启服务
+    if systemctl is-active --quiet anytls; then
+      log_info "正在重启服务..."
+      systemctl restart anytls
+    fi
+    
+    log_info "服务配置已更新"
+    return 0
+  else
+    log_warn "未找到服务配置文件，无法更新"
+    return 1
+  fi
+}
+
 # 检测操作系统类型和版本
 detect_os() {
   log_info "正在检测操作系统..."
@@ -627,6 +868,61 @@ view_logs() {
   journalctl -u anytls -f --no-pager
 }
 
+# 配置 TLS 证书
+configure_tls_certificate() {
+  result=$(install_and_configure_certbot)
+  if [ $? -eq 0 ]; then
+    # 解析返回的证书路径
+    CERT_PATH=$(echo "$result" | cut -d: -f1)
+    KEY_PATH=$(echo "$result" | cut -d: -f2)
+    DOMAIN_NAME=$(echo "$result" | cut -d: -f3)
+    
+    # 更新服务配置
+    log_info "正在更新 AnyTLS 服务配置以使用 TLS 证书..."
+    
+    # 提取当前端口和密码
+    CURRENT_PORT=$(grep -oP 'ExecStart=.*?-l\s+0.0.0.0:\K[0-9]+' /etc/systemd/system/anytls.service || echo "")
+    CURRENT_PASSWORD=$(grep -oP 'ExecStart=.*?-p\s+\K[^ ]+' /etc/systemd/system/anytls.service || echo "")
+    
+    if [ -z "$CURRENT_PORT" ] || [ -z "$CURRENT_PASSWORD" ]; then
+      log_error "无法检测到当前配置，请重新安装"
+    fi
+    
+    # 修改 systemd 服务配置
+    sed -i "s|ExecStart=.*|ExecStart=/usr/local/bin/anytls-server -l 0.0.0.0:${CURRENT_PORT} -p ${CURRENT_PASSWORD} --cert ${CERT_PATH} --key ${KEY_PATH}|" /etc/systemd/system/anytls.service
+    
+    # 重启服务
+    systemctl daemon-reload
+    systemctl restart anytls
+    
+    # 检查服务状态
+    sleep 2
+    if systemctl is-active --quiet anytls; then
+      log_info "✅ TLS 证书配置成功！服务现在使用域名: ${DOMAIN_NAME}"
+    else
+      log_error "服务配置后启动失败，请检查日志: journalctl -u anytls -n 50"
+    fi
+  fi
+}
+
+# 配置防火墙（交互模式）
+configure_firewall_interactive() {
+  log_info "正在配置防火墙..."
+  
+  PORT=$(grep -oP 'ExecStart=.*?-l\s+0.0.0.0:\K[0-9]+' /etc/systemd/system/anytls.service || echo "")
+  if [ -z "$PORT" ]; then
+    read -r -p "请输入需要开放的端口: " PORT
+  else
+    read -r -p "检测到当前端口为 ${PORT}，是否使用此端口? (Y/n): " confirm
+    if [[ "$confirm" =~ ^[Nn]$ ]]; then
+      read -r -p "请输入新的端口: " PORT
+    fi
+  fi
+  
+  configure_firewall
+  log_info "防火墙配置完成"
+}
+
 # 故障排除向导
 troubleshoot_wizard() {
   echo "=================================================="
@@ -649,11 +945,82 @@ troubleshoot_wizard() {
        systemctl status anytls
        echo "服务日志:"
        journalctl -u anytls -n 30 --no-pager
+       
+       # 检查端口冲突
+       PORT=$(grep -oP 'ExecStart=.*?-l\s+0.0.0.0:\K[0-9]+' /etc/systemd/system/anytls.service || echo "")
+       if [ -n "$PORT" ]; then
+         echo ""
+         echo "检查端口 ${PORT} 是否被占用:"
+         if ! check_port_available "$PORT"; then
+           echo -e "\033[31m[错误]\033[0m 端口 ${PORT} 已被占用!"
+           
+           # 显示占用端口的进程信息
+           echo "占用端口的进程信息:"
+           process_info=$(get_port_process_info "$PORT")
+           if [ -n "$process_info" ]; then
+             echo "$process_info"
+           else
+             echo "无法获取占用端口的进程信息"
+           fi
+           
+           echo ""
+           echo "您可以选择:"
+           echo "1) 尝试释放端口 (终止占用进程)"
+           echo "2) 为 AnyTLS 使用新的端口"
+           
+           read -r -p "请选择操作 [1-2]: " port_action
+           
+           case $port_action in
+             1)
+               if try_release_port "$PORT"; then
+                 echo "端口已释放，正在重启服务..."
+                 systemctl restart anytls
+                 
+                 # 检查服务是否成功启动
+                 sleep 2
+                 if systemctl is-active --quiet anytls; then
+                   echo -e "\033[32m[成功]\033[0m 服务已成功重启"
+                 else
+                   echo -e "\033[31m[错误]\033[0m 服务重启失败，请检查日志"
+                   journalctl -u anytls -n 10 --no-pager
+                 fi
+               fi
+               ;;
+             2)
+               NEW_PORT=$(find_available_port)
+               if [ -n "$NEW_PORT" ]; then
+                 echo "正在更新服务配置，使用新端口: ${NEW_PORT}..."
+                 
+                 if update_service_port "$PORT" "$NEW_PORT"; then
+                   # 尝试配置防火墙
+                   PORT=$NEW_PORT
+                   configure_firewall
+                   
+                   # 检查服务是否成功启动
+                   sleep 2
+                   if systemctl is-active --quiet anytls; then
+                     echo -e "\033[32m[成功]\033[0m 服务已切换到端口 ${NEW_PORT} 并成功启动"
+                   else
+                     echo -e "\033[31m[错误]\033[0m 服务启动失败，请检查日志"
+                     journalctl -u anytls -n 10 --no-pager
+                   fi
+                 fi
+               fi
+               ;;
+           esac
+         else
+           echo -e "\033[32m[正常]\033[0m 端口 ${PORT} 未被占用，问题可能在其他地方"
+         fi
+       else
+         echo "无法从服务配置中检测到端口号"
+       fi
+       
        echo ""
-       echo "可能的解决方案:"
-       echo "1. 检查端口是否被占用: netstat -tuln | grep <端口>"
-       echo "2. 检查配置文件权限: ls -la /etc/systemd/system/anytls.service"
-       echo "3. 尝试重新安装: ./install_anytls.sh --update"
+       echo "其他可能的解决方案:"
+       echo "1. 检查配置文件权限: ls -la /etc/systemd/system/anytls.service"
+       echo "2. 确保 anytls 用户有权限: id anytls"
+       echo "3. 检查系统资源是否充足: free -m; df -h"
+       echo "4. 尝试重新安装: ./install_anytls.sh --update"
        ;;
     2) # 无法连接到服务
        echo "正在检查连接问题..."
@@ -728,61 +1095,6 @@ troubleshoot_wizard() {
   
   read -r -p "按回车键继续..."
   troubleshoot_wizard
-}
-
-# 配置 TLS 证书
-configure_tls_certificate() {
-  result=$(install_and_configure_certbot)
-  if [ $? -eq 0 ]; then
-    # 解析返回的证书路径
-    CERT_PATH=$(echo "$result" | cut -d: -f1)
-    KEY_PATH=$(echo "$result" | cut -d: -f2)
-    DOMAIN_NAME=$(echo "$result" | cut -d: -f3)
-    
-    # 更新服务配置
-    log_info "正在更新 AnyTLS 服务配置以使用 TLS 证书..."
-    
-    # 提取当前端口和密码
-    CURRENT_PORT=$(grep -oP 'ExecStart=.*?-l\s+0.0.0.0:\K[0-9]+' /etc/systemd/system/anytls.service || echo "")
-    CURRENT_PASSWORD=$(grep -oP 'ExecStart=.*?-p\s+\K[^ ]+' /etc/systemd/system/anytls.service || echo "")
-    
-    if [ -z "$CURRENT_PORT" ] || [ -z "$CURRENT_PASSWORD" ]; then
-      log_error "无法检测到当前配置，请重新安装"
-    fi
-    
-    # 修改 systemd 服务配置
-    sed -i "s|ExecStart=.*|ExecStart=/usr/local/bin/anytls-server -l 0.0.0.0:${CURRENT_PORT} -p ${CURRENT_PASSWORD} --cert ${CERT_PATH} --key ${KEY_PATH}|" /etc/systemd/system/anytls.service
-    
-    # 重启服务
-    systemctl daemon-reload
-    systemctl restart anytls
-    
-    # 检查服务状态
-    sleep 2
-    if systemctl is-active --quiet anytls; then
-      log_info "✅ TLS 证书配置成功！服务现在使用域名: ${DOMAIN_NAME}"
-    else
-      log_error "服务配置后启动失败，请检查日志: journalctl -u anytls -n 50"
-    fi
-  fi
-}
-
-# 配置防火墙（交互模式）
-configure_firewall_interactive() {
-  log_info "正在配置防火墙..."
-  
-  PORT=$(grep -oP 'ExecStart=.*?-l\s+0.0.0.0:\K[0-9]+' /etc/systemd/system/anytls.service || echo "")
-  if [ -z "$PORT" ]; then
-    read -r -p "请输入需要开放的端口: " PORT
-  else
-    read -r -p "检测到当前端口为 ${PORT}，是否使用此端口? (Y/n): " confirm
-    if [[ "$confirm" =~ ^[Nn]$ ]]; then
-      read -r -p "请输入新的端口: " PORT
-    fi
-  fi
-  
-  configure_firewall
-  log_info "防火墙配置完成"
 }
 
 # --- 参数解析 ---
@@ -921,8 +1233,35 @@ log_info "将使用 IP: ${SERVER_IP}"
 # 6. 设置监听端口
 if [ -z "$PORT" ]; then
   read -r -p "请输入 AnyTLS 监听端口 [1024-65535] (回车则随机生成): " PORT
-  [ -z "$PORT" ] && PORT=$(shuf -i 20000-60000 -n 1)
+  if [ -z "$PORT" ]; then
+    # 随机生成端口并确保可用
+    PORT=$(find_available_port)
+  else
+    # 验证输入是否为数字
+    if [[ ! "$PORT" =~ ^[0-9]+$ ]]; then
+      log_warn "无效的端口号，将使用随机端口"
+      PORT=$(find_available_port)
+    elif [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
+      log_warn "端口必须在 1024-65535 范围内，将使用随机端口"
+      PORT=$(find_available_port)
+    else
+      # 检查用户输入的端口是否可用
+      if ! check_port_available "$PORT"; then
+        # 处理端口冲突
+        NEW_PORT=$(handle_port_conflict "$PORT")
+        PORT=$NEW_PORT
+      fi
+    fi
+  fi
+else
+  # 检查命令行提供的端口是否可用
+  if ! check_port_available "$PORT"; then
+    log_warn "命令行指定的端口 ${PORT} 已被占用"
+    NEW_PORT=$(handle_port_conflict "$PORT")
+    PORT=$NEW_PORT
+  fi
 fi
+
 log_info "使用端口: ${PORT}"
 
 # 7. 设置连接密码
@@ -1035,47 +1374,18 @@ fi
 # 14. 启动服务
 log_info "正在重载 systemd 并启动 anytls 服务..."
 systemctl daemon-reload
-systemctl enable --now anytls
 
-# 等待2秒确保服务已启动，然后检查状态
-sleep 2
-SERVICE_STATUS=$(systemctl is-active anytls)
-
-# 15. 生成连接字符串
-CONNECTION_STRING=$(generate_connection_string "anytls" "$SERVER_IP" "$PORT" "$PASSWORD")
-
-# 16. 显示最终结果
-echo ""
-echo -e "\033[1;32m✅ AnyTLS 安装并启动成功！\033[0m"
-echo "=================================================="
-echo "  服务器地址: ${SERVER_IP}"
-echo "  监听端口: ${PORT}"
-echo "  连接密码: ${PASSWORD}"
-echo "  当前版本: v${VERSION}"
-echo "--------------------------------------------------"
-if [ "${SERVICE_STATUS}" = "active" ]; then
-  echo -e "  服务状态: \033[32m运行中 (active)\033[0m"
-else
-  echo -e "  服务状态: \033[31m启动失败 (inactive)\033[0m"
+# 在启动前再次检查端口是否可用
+if ! check_port_available "$PORT"; then
+  log_warn "启动前检测到端口 ${PORT} 已被占用，尝试处理..."
+  NEW_PORT=$(handle_port_conflict "$PORT")
+  
+  if [ "$NEW_PORT" != "$PORT" ]; then
+    log_info "更新服务配置为使用端口 ${NEW_PORT}..."
+    update_service_port "$PORT" "$NEW_PORT"
+    PORT=$NEW_PORT
+  fi
 fi
-echo "--------------------------------------------------"
-echo "连接字符串:"
-echo "${CONNECTION_STRING}"
-echo "--------------------------------------------------"
 
-# 生成二维码
-generate_qrcode "${CONNECTION_STRING}" "连接二维码"
-
-echo "=================================================="
-echo "常用管理命令:"
-echo "  启动服务: systemctl start anytls"
-echo "  停止服务: systemctl stop anytls"
-echo "  重启服务: systemctl restart anytls"
-echo "  查看状态: systemctl status anytls"
-echo "  查看日志: journalctl -u anytls -f --no-pager"
-echo "  更新服务: $0 --update"
-echo "  检查状态: $0 --check-status"
-echo "  显示菜单: $0 --menu"
-echo ""
-
-exit 0
+# 启动服务
+systemctl enable --now anyt
