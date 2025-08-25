@@ -473,18 +473,10 @@ get_public_ip() {
   echo ""
 }
 
-# ** 已移除自动更新检查 **
-# echo "[INFO] 正在检查脚本更新..."
-# latest_version=$(curl -sL https://raw.githubusercontent.com/10000ge10000/anytls/main/install_anytls.sh | grep "脚本 v" | head -n1)
-# if [ -n "$latest_version" ]; then
-#     echo "[INFO] 发现新版本: $latest_version (当前版本: $VERSION)"
-#     read -p "是否要升级到最新版本? (y/n): " yn
-#     if [[ $yn =~ ^[Yy]$ ]]; then
-#         echo "[INFO] 正在下载最新版本..."
-#         wget -O install_anytls.sh https://raw.githubusercontent.com/10000ge10000/anytls/main/install_anytls.sh
-#         exit 0
-#     fi
-# fi
+check_for_updates() {
+  log_info "已禁用自动更新功能，始终使用当前脚本版本: $SCRIPT_VERSION"
+}
+
 
 
 # 生成二维码
