@@ -476,14 +476,14 @@ get_public_ip() {
 # 检查版本更新
 check_for_updates() {
   log_info "正在检查脚本更新..."
-  LATEST_VERSION=$(curl -s "https://raw.githubusercontent.com/10000ge10000/anytls/main/version.txt" | head -n1)
+  LATEST_VERSION=$(curl -s "https://raw.githubusercontent.com/mingmenmama/anytls/main/version.txt" | head -n1)
   
   if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "$SCRIPT_VERSION" ]; then
     log_info "发现新版本: $LATEST_VERSION (当前版本: $SCRIPT_VERSION)"
     read -r -p "是否要升级到最新版本? (y/n): " upgrade_choice
     if [[ "$upgrade_choice" =~ ^[Yy]$ ]]; then
       log_info "正在下载最新版本..."
-      wget -O install_anytls_new.sh "https://raw.githubusercontent.com/10000ge10000/anytls/main/install_anytls.sh"
+      wget -O install_anytls_new.sh "https://raw.githubusercontent.com/mingmenmama/anytls/main/install_anytls.sh"
       chmod +x install_anytls_new.sh
       log_info "下载完成，正在执行最新版本的脚本..."
       exec ./install_anytls_new.sh "$@"
@@ -777,7 +777,7 @@ perform_uninstall() {
   fi
   
   # 下载并执行卸载脚本
-  wget -O uninstall_anytls.sh https://raw.githubusercontent.com/10000ge10000/anytls/main/uninstall_anytls.sh
+  wget -O uninstall_anytls.sh https://raw.githubusercontent.com/mingmenmama/anytls/main/uninstall_anytls.sh
   chmod +x uninstall_anytls.sh
   ./uninstall_anytls.sh
   
