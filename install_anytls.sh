@@ -1328,28 +1328,31 @@ if ! id "anytls" &>/dev/null; then
   useradd -r -s /usr/sbin/nologin -d /dev/null anytls
 fi
 
-# 12. 创建 systemd 服务
-log_info "正在创建 systemd 服务文件..."
+# ==============================
+# 12. 写入 systemd service 配置
+# ==============================
 cat > /etc/systemd/system/anytls.service <<EOF
 [Unit]
-Description=AnyTLS-Go Server
-Documentation=https://github.com/anytls/anytls-go
-After=network.target network-online.target
-Wants=network-online.target
+Description=AnyTLS Service
+After=network.target
 
 [Service]
 Type=simple
-User=anytls
-Group=anytls
-ExecStart=/usr/local/bin/anytls-server -l 0.0.0.0:${PORT} -p ${PASSWORD} ${TLS_PARAMS}
+ExecStart=/usr/local/bin/anytls -c /etc/anytls/config.json
 Restart=on-failure
 RestartSec=5
-LimitNPROC=10000
-LimitNOFILE=1000000
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# 重新加载 systemd
+systemctl daemon-reexec
+systemctl daemon-reload
+
+# 启用并启动服务
+systemctl enable --now anytls
+
 
 # 13. 配置防火墙
 if [ "$SKIP_FIREWALL" != true ]; then
