@@ -473,26 +473,19 @@ get_public_ip() {
   echo ""
 }
 
-# 检查版本更新
-check_for_updates() {
-  log_info "正在检查脚本更新..."
-  LATEST_VERSION=$(curl -s "https://raw.githubusercontent.com/mingmenmama/anytls/main/version.txt" | head -n1)
-  
-  if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "$SCRIPT_VERSION" ]; then
-    log_info "发现新版本: $LATEST_VERSION (当前版本: $SCRIPT_VERSION)"
-    read -r -p "是否要升级到最新版本? (y/n): " upgrade_choice
-    if [[ "$upgrade_choice" =~ ^[Yy]$ ]]; then
-      log_info "正在下载最新版本..."
-      wget -O install_anytls_new.sh "https://raw.githubusercontent.com/mingmenmama/anytls/main/install_anytls.sh"
-      chmod +x install_anytls_new.sh
-      log_info "下载完成，正在执行最新版本的脚本..."
-      exec ./install_anytls_new.sh "$@"
-      # 这里不会继续执行，因为 exec 会替换当前进程
-    fi
-  else
-    log_info "当前已是最新版本: $SCRIPT_VERSION"
-  fi
-}
+# ** 已移除自动更新检查 **
+# echo "[INFO] 正在检查脚本更新..."
+# latest_version=$(curl -sL https://raw.githubusercontent.com/10000ge10000/anytls/main/install_anytls.sh | grep "脚本 v" | head -n1)
+# if [ -n "$latest_version" ]; then
+#     echo "[INFO] 发现新版本: $latest_version (当前版本: $VERSION)"
+#     read -p "是否要升级到最新版本? (y/n): " yn
+#     if [[ $yn =~ ^[Yy]$ ]]; then
+#         echo "[INFO] 正在下载最新版本..."
+#         wget -O install_anytls.sh https://raw.githubusercontent.com/10000ge10000/anytls/main/install_anytls.sh
+#         exit 0
+#     fi
+# fi
+
 
 # 生成二维码
 generate_qrcode() {
