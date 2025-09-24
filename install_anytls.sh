@@ -32,7 +32,7 @@ log_error() {
 # 脚本退出时，执行清理操作
 cleanup() {
   # 如果 TEMP_DIR 变量存在且是一个目录，则删除
-  if [ -n "${TEMP_DIR-}" ] && [ -d "${TEMP_DIR}" ]; then
+  if [ -d "${TEMP_DIR}" ]; then
     log_info "执行清理操作，删除临时目录 ${TEMP_DIR}"
     rm -rf "${TEMP_DIR}"
   fi
@@ -56,9 +56,7 @@ install_dependencies() {
 
 # 使用外部服务获取公网 IP
 get_public_ip() {
-  # 日志输出到 stderr(2)，避免被命令替换 `$(...)` 捕获
   log_info "正在检测公网 IP..." >&2
-  # 依次尝试多个可靠的 IP 查询服务
   curl -s --max-time 10 https://ipinfo.io/ip || \
   curl -s --max-time 10 https://api.ipify.org || \
   curl -s --max-time 10 https://icanhazip.com || \
@@ -93,7 +91,6 @@ if [ -z "$SERVER_IP" ]; then
 fi
 
 read -r -p "检测到服务器 IP 为 [${SERVER_IP}]，是否确认使用此 IP？(Y/n): " confirm_ip
-# 如果用户输入了 'n' 或 'N'
 if [[ "${confirm_ip}" =~ ^[nN]$ ]]; then
     read -r -p "请重新输入服务器公网 IP 地址: " SERVER_IP
     [ -z "$SERVER_IP" ] && log_error "未提供 IP 地址，脚本终止。"
@@ -102,7 +99,7 @@ log_info "将使用 IP: ${SERVER_IP}"
 
 # 5. 设置监听端口
 read -r -p "请输入 AnyTLS 监听端口 [1024-65535] (回车则随机生成): " PORT
-[ -z "$PORT" ] && PORT=$(shuf -i 20000-60000 -n 1)
+[ -z "$PORT" ] && PORT=$(od -An -N2 -i /dev/random | awk '{print int($1%40000)+20000}')
 log_info "使用端口: ${PORT}"
 
 # 6. 设置连接密码
@@ -115,10 +112,65 @@ else
   log_info "密码已设置。"
 fi
 
+# 6.1 选择出站 IP 优先级交互
+echo
+echo "请选择出站 IP 优先级选项："
+echo "  1) 仅 IPv4 (会尝试通过 sysctl 禁用 IPv6，请谨慎)"
+echo "  2) 仅 IPv6 (尽量优先 IPv6，不能完全禁用 IPv4 在所有系统上)"
+echo "  3) IPv4 优先 (默认)"
+echo "  4) IPv6 优先"
+read -r -p "选择 (1-4) [3]: " IP_PREF
+IP_PREF=${IP_PREF:-3}
+
+apply_ip_preference() {
+  # 备份 gai.conf
+  if [ -f /etc/gai.conf ]; then
+    cp /etc/gai.conf /root/gai.conf.bak.$(date +%s)
+    log_info "备份 /etc/gai.conf 到 /root/gai.conf.bak.$(date +%s)"
+  fi
+
+  case "$1" in
+    1)
+      # 仅 IPv4: 提高 IPv4 映射优先级并禁用 IPv6（持久化）
+      echo "# anytls: prefer only IPv4 (added by install script)" >> /etc/gai.conf || true
+      echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf || true
+      cat > /etc/sysctl.d/99-anytls-disable-ipv6.conf <<EOF
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+EOF
+      log_warn "已写入 /etc/sysctl.d/99-anytls-disable-ipv6.conf，将在 sysctl --system 时生效（已立即生效）。"
+      sysctl --system >/dev/null 2>&1 || true
+      ;;
+    2)
+      # 仅 IPv6: 优先 IPv6（无法在所有系统上完全禁用 IPv4），设置优先级
+      echo "# anytls: prefer only IPv6 (added by install script)" >> /etc/gai.conf || true
+      echo "precedence ::/0  100" >> /etc/gai.conf || true
+      echo "precedence ::ffff:0:0/96  0" >> /etc/gai.conf || true
+      ;;
+    3)
+      # IPv4 优先
+      echo "# anytls: prefer IPv4 (added by install script)" >> /etc/gai.conf || true
+      echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf || true
+      ;;
+    4)
+      # IPv6 优先
+      echo "# anytls: prefer IPv6 (added by install script)" >> /etc/gai.conf || true
+      echo "precedence ::/0  100" >> /etc/gai.conf || true
+      echo "precedence ::ffff:0:0/96  10" >> /etc/gai.conf || true
+      ;;
+    *)
+      log_warn "未知选择 ${1}，不修改 IP 优先级。"
+      ;;
+  esac
+}
+
+# 在继续安装前应用用户的 IP 偏好
+apply_ip_preference "$IP_PREF"
+
 # 7. 从 GitHub API 获取最新版本信息
 log_info "正在从 GitHub 获取最新版本信息..."
 API_URL="https://api.github.com/repos/anytls/anytls-go/releases/latest"
-API_RESPONSE=$(curl -sL --connect-timeout 10 --max-time 20 "${API_URL}")
+API_RESPONSE=$(curl -sL --connect-timeout 10 --max-time 30 "${API_URL}")
 
 if [ -z "${API_RESPONSE}" ]; then
     log_error "从 GitHub API (${API_URL}) 获取响应失败，请检查网络连接。"
@@ -126,11 +178,6 @@ fi
 
 # ==================== 修改核心点 ====================
 # 采用更稳定、更简单的多重 grep 管道来解析 JSON 文本
-# 1. 筛选出包含 "browser_download_url" 的内容
-# 2. 在结果中进一步筛选出包含当前架构 `${ARCH_TAG}` 的那一个
-# 3. 确保它是一个 .zip 结尾的链接
-# 4. 使用 cut 切割字符串，提取出纯粹的 URL
-# 5. 使用 head -n 1 确保即使有多个匹配也只取第一个
 DOWNLOAD_URL=$(echo "${API_RESPONSE}" | \
     grep "browser_download_url" | \
     grep "${ARCH_TAG}" | \
@@ -150,11 +197,12 @@ log_info "下载链接: ${DOWNLOAD_URL}"
 
 # 8. 下载并安装
 TEMP_DIR=$(mktemp -d)
+chmod 700 "${TEMP_DIR}"
 log_info "创建临时工作目录: ${TEMP_DIR}"
 cd "${TEMP_DIR}"
 
 log_info "正在下载文件..."
-wget -q --show-progress "${DOWNLOAD_URL}" -O anytls.zip
+wget -q --show-progress "${DOWNLOAD_URL}" -O anytls.zip || { log_error "下载失败"; exit 1; }
 log_info "下载完成，正在解压..."
 unzip -o anytls.zip > /dev/null
 log_info "正在安装二进制文件到 /usr/local/bin/ ..."
@@ -169,6 +217,21 @@ fi
 
 # 10. 创建 systemd 服务
 log_info "正在创建 systemd 服务文件..."
+[ -f /etc/systemd/system/anytls.service ] && cp /etc/systemd/system/anytls.service /root/anytls.service.bak.$(date +%s)
+
+# 创建 /etc/anytls 目录并写入 EnvironmentFile
+mkdir -p /etc/anytls
+cat > /etc/anytls/anytls.env <<EOV
+PORT=${PORT}
+PASSWORD=${PASSWORD}
+EOV
+chown root:anytls /etc/anytls || true
+chmod 0750 /etc/anytls || true
+chown root:anytls /etc/anytls/anytls.env || true
+chmod 0640 /etc/anytls/anytls.env || true
+
+log_info "已创建 /etc/anytls/anytls.env，并设置了安全权限。"
+
 cat > /etc/systemd/system/anytls.service <<EOF
 [Unit]
 Description=AnyTLS-Go Server
@@ -180,6 +243,7 @@ Wants=network-online.target
 Type=simple
 User=anytls
 Group=anytls
+EnvironmentFile=/etc/anytls/anytls.env
 ExecStart=/usr/local/bin/anytls-server -l 0.0.0.0:${PORT} -p ${PASSWORD}
 Restart=on-failure
 RestartSec=5
