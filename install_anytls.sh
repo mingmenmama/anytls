@@ -60,12 +60,12 @@ log_info "使用 IP: $SERVER_IP"
 
 # --- 设置端口和密码 ---
 read -r -p "请输入 AnyTLS 监听端口 (回车随机生成): " PORT
-[ -z "$PORT" ] && PORT=$(od -An -N2 -i /dev/random | awk '{print int($1%40000)+20000}')
+[ -z "$PORT" ] && PORT=$(shuf -i 20000-60000 -n 1 2>/dev/null || od -An -N2 -i /dev/random | awk '{print int($1%40000)+20000}')
 log_info "使用端口: $PORT"
 
 read -r -sp "请输入 AnyTLS 密码 (回车随机生成): " PASSWORD
 echo
-[ -z "$PASSWORD" ] && PASSWORD=$(head /dev/urandom | tr -dc 'A-Za-z0-9' | head -c16)
+[ -z "$PASSWORD" ] && PASSWORD=$(head /dev/urandom | tr -dc 'A-Za-z0-9' | head -c16 2>/dev/null || openssl rand -base64 12 | tr -d "=+/" | cut -c1-12 2>/dev/null || echo "defaultpassword")
 log_info "密码: $PASSWORD"
 
 # --- IP 优先级交互 ---
@@ -100,6 +100,9 @@ EOF
       sysctl --system >/dev/null
       ;;
     4) # 仅 IPv6
+      log_warn "警告：仅IPv6模式将阻塞所有IPv4出站流量，确保服务器支持IPv6且VPN客户端也支持IPv6"
+      read -p "确认继续？ (y/N): " confirm
+      [[ "$confirm" =~ ^[yY]$ ]] || { log_info "跳过IP优先级设置"; return; }
       sysctl -w net.ipv6.conf.all.disable_ipv6=0 >/dev/null
       sysctl -w net.ipv6.conf.default.disable_ipv6=0 >/dev/null
       iptables -F
@@ -157,11 +160,17 @@ Type=simple
 User=anytls
 Group=anytls
 EnvironmentFile=/etc/anytls/anytls.env
-ExecStart=/usr/local/bin/anytls-server -l 0.0.0.0:\$PORT -p \$PASSWORD
+ExecStart=/usr/local/bin/anytls-server -l 0.0.0.0:\${PORT} -p \${PASSWORD}
 Restart=on-failure
 RestartSec=5
 LimitNPROC=10000
 LimitNOFILE=1000000
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/anytls
+ProtectHome=yes
+PrivateDevices=yes
 
 [Install]
 WantedBy=multi-user.target
